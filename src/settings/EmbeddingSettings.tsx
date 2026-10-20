@@ -1,0 +1,73 @@
+import React,{useEffect,useRef,useState} from 'react';
+import {ArrowLeft,ArrowRight,Check,Database,Plus,Search,Star,Trash2} from 'lucide-react';
+import {EMBEDDING_STORAGE,loadEmbeddings,supportsEmbedding,validateEmbedding} from './embedding-draft.mjs';
+import {settingsApi} from './settings-api';
+import './settings.css';
+
+type Model={id:string;name:string;modelId:string;providerId:string;protocol:string;dimensions:string;batchSize:string;timeout:string;sendDimensions:boolean};
+type Provider={id:string;name:string;vendor:string;url:string};
+type Catalog={version:number;revision:number;models:Model[];defaultModelId:string|null};
+type Props={initialCatalog:any;onBack:()=>void;onProviders:()=>void;onModels:()=>void;guard:React.MutableRefObject<(proceed:()=>void)=>void>};
+export function EmbeddingSettings({initialCatalog,onBack,onProviders,onModels,guard}:Props){
+ const fromBackend=(c:any):Catalog=>({version:1,revision:c.revision,models:c.embeddingModels||[],defaultModelId:c.defaultEmbeddingId});
+ const [initial]=useState(()=>({catalog:fromBackend(initialCatalog),error:''}));
+ const [catalog,setCatalog]=useState(initial.catalog),[form,setForm]=useState<Model|null>(initial.catalog.models[0]||null);
+ const [busy,setBusy]=useState(false),[legacy,setLegacy]=useState(initialCatalog.legacyEmbedding),[indexCount,setIndexCount]=useState(initialCatalog.embeddingIndexCount||0);
+ const [localDraft,setLocalDraft]=useState(()=>{try{return {models:loadEmbeddings(localStorage).models,error:''}}catch(e){return {models:[],error:(e as Error).message}}});
+ const [query,setQuery]=useState(''),[message,setMessage]=useState(''),[errors,setErrors]=useState<Record<string,string>>({});
+ const [confirmation,setConfirmation]=useState<{title:string;message:string;label:string;action:()=>void}|null>(null);
+ const baseline=useRef(JSON.stringify(form)),editor=useRef<HTMLDivElement>(null),modal=useRef<HTMLDivElement>(null);
+ const providers=initialCatalog.providers.filter(supportsEmbedding),provider=providers.find(p=>p.id===form?.providerId);
+ const saved=catalog.models.find(m=>m.id===form?.id),dirty=JSON.stringify(form)!==baseline.current;
+ const selectedDefault=catalog.models.find(m=>m.id===catalog.defaultModelId);
+ const defaultProvider=providers.find(p=>p.id===selectedDefault?.providerId);
+ function requestLeave(action:()=>void){if(busy)return;if(!dirty){action();return}setConfirmation({title:'放弃未保存的修改？',message:'当前嵌入模型表单尚未保存，放弃后保留后端已保存的配置。',label:'确认放弃',action})}
+ useEffect(()=>{guard.current=requestLeave;const before=(e:BeforeUnloadEvent)=>{if(dirty){e.preventDefault();e.returnValue=''}};window.addEventListener('beforeunload',before);return()=>{guard.current=fn=>fn();window.removeEventListener('beforeunload',before)}},[dirty,guard,busy]);
+ useEffect(()=>{if(!confirmation)return;const previous=document.activeElement as HTMLElement;modal.current?.querySelector('button')?.focus();return()=>previous?.focus()},[confirmation]);
+ function open(m:Model|null){setForm(m);baseline.current=JSON.stringify(m);setErrors({});setMessage('')}
+ function choose(m:Model){requestLeave(()=>{open(m);if(window.innerWidth<1000)editor.current?.scrollIntoView({block:'start'})})}
+ function add(){requestLeave(()=>{const p=providers.length===1?providers[0]:null;open({id:crypto.randomUUID(),name:'',modelId:'',providerId:p?.id||'',protocol:p?.vendor==='ollama'?'ollama':'openai',dimensions:'',batchSize:'8',timeout:'60',sendDimensions:false});baseline.current='null';requestAnimationFrame(()=>editor.current?.querySelector('input')?.focus())})}
+ function change(key:keyof Model,value:string|boolean){setForm(m=>{if(!m)return m;const next={...m,[key]:value};if(key==='providerId'){next.protocol=providers.find(p=>p.id===value)?.vendor==='ollama'?'ollama':'openai';next.sendDimensions=false}if(key==='protocol'&&value==='ollama')next.sendDimensions=false;return next});setErrors({});setMessage('')}
+ function accept(c:any){const next=fromBackend(c);setCatalog(next);setLegacy(c.legacyEmbedding);setIndexCount(c.embeddingIndexCount||0);return next}
+ function fail(e:unknown){setMessage('');setErrors({save:(e as Error).message+' 当前输入已保留。'})}
+ async function save(e:React.FormEvent){e.preventDefault();if(!form||busy)return;const issues=validateEmbedding(form,catalog,providers);if(Object.keys(issues).length){setErrors(issues);return}setBusy(true);try{const c=accept(await settingsApi('/embeddings','POST',{model:form,revision:catalog.revision}));open(c.models.find(m=>m.id===form.id)!);setMessage('模型已保存到本机后端。设为默认后用于材料入库和检索。')}catch(e){fail(e)}finally{setBusy(false)}}
+ async function makeDefault(){if(!saved||dirty||!provider||busy)return;setBusy(true);try{accept(await settingsApi('/embeddings/default','POST',{id:saved.id,revision:catalog.revision}));setErrors({});setMessage('默认嵌入模型已生效。')}catch(e){fail(e)}finally{setBusy(false)}}
+ async function restoreLegacy(){if(busy)return;setBusy(true);try{accept(await settingsApi('/embeddings/default','POST',{id:null,revision:catalog.revision}));setErrors({});setMessage('已恢复原有本地嵌入配置。')}catch(e){fail(e)}finally{setBusy(false)}}
+ async function testModel(probe=false){if(!saved||dirty||busy)return;setBusy(true);setErrors({});setMessage(probe?'正在探测模型原生向量维度…':'正在请求真实向量…');try{const result=await settingsApi('/embeddings/'+saved.id+(probe?'/probe':'/test'),'POST',{});if(probe){setForm(m=>m?{...m,dimensions:String(result.dimensions)}:m);setMessage(`探测成功：原生 ${result.dimensions} 维，已填入表单；请保存后再测试。探测不发送 dimensions 参数。`)}else setMessage(`真实向量测试成功 · ${result.model} · ${result.dimensions} 维 · ${(result.elapsedMs/1000).toFixed(1)} 秒`)}catch(e){fail(e)}finally{setBusy(false)}}
+ function importDraft(){requestLeave(async()=>{setBusy(true);try{accept(await settingsApi('/embeddings/import','POST',{models:localDraft.models,revision:catalog.revision}));setLocalDraft({models:[],error:''});try{localStorage.removeItem(EMBEDDING_STORAGE)}catch{}setMessage('旧草稿已导入后端，默认模型保持不变。')}catch(e){fail(e)}finally{setBusy(false)}})}
+ function remove(){if(!saved||busy)return;setConfirmation({title:catalog.defaultModelId===saved.id?'删除默认嵌入模型？':'删除嵌入模型？',message:`将删除“${saved.name}”。${catalog.defaultModelId===saved.id?'没有材料索引时，将恢复原有本地配置；已有索引会阻止此操作。':''}已有材料不会被删除。`,label:'确认删除',action:async()=>{setBusy(true);try{const c=accept(await settingsApi('/embeddings/'+saved.id,'DELETE',{revision:catalog.revision}));open(c.models[0]||null);setMessage('模型已删除。')}catch(e){fail(e)}finally{setBusy(false)}}})}
+ const visible=catalog.models.filter(m=>[m.name,m.modelId,providers.find(p=>p.id===m.providerId)?.name||''].join(' ').toLowerCase().includes(query.toLowerCase()));
+ const field=(key:'name'|'modelId'|'dimensions'|'batchSize'|'timeout',label:string,placeholder:string)=><label className="settings-field">{label}<input value={form?.[key]||''} placeholder={placeholder} inputMode={['dimensions','batchSize','timeout'].includes(key)?'numeric':undefined} onChange={e=>change(key,e.target.value)} aria-invalid={!!errors[key]} aria-describedby={errors[key]?`embedding-error-${key}`:undefined}/>{errors[key]&&<span className="field-error" id={`embedding-error-${key}`}>{errors[key]}</span>}</label>;
+ return <main className="settings-page">
+  <button className="settings-back" onClick={onBack}><ArrowLeft size={16}/> 我的</button>
+  <div className="settings-heading"><div><p className="settings-eyebrow">MODEL SETTINGS</p><h1>模型设置</h1><p>管理模型的连接方式，让学习按你的选择进行。</p></div><span className="settings-badge">后端配置</span></div>
+  <div className="settings-tabs" aria-label="设置分类"><button onClick={onProviders}>供应商</button><button onClick={onModels}>语言模型</button><button aria-current="page">嵌入模型</button></div>
+  <div className="settings-note"><Database size={18}/><p>嵌入模型将材料转成向量，用于查找相关内容。配置保存在本机后端，默认模型用于材料入库与检索。已有索引时禁止切换向量配置，本轮不自动重建。</p></div>
+  {localDraft.models.length>0&&<div className="settings-note"><p>发现此前的浏览器草稿，可导入后端；默认模型保持不变。</p><button disabled={busy} onClick={importDraft}>导入嵌入草稿</button></div>}{localDraft.error&&<p role="alert" className="field-error">{localDraft.error}</p>}
+  <div role="status" className="settings-status">{message}</div>
+  {!form&&errors.save&&<p role="alert" className="field-error">{errors.save}</p>}{initial.error&&<p role="alert" className="field-error">{initial.error}</p>}
+  <section className="settings-default-summary"><Star size={17}/><div><strong>默认嵌入模型</strong><p>{selectedDefault?`${selectedDefault.name} · ${defaultProvider?.name||'供应商已失效，请重新关联'} · ${selectedDefault.dimensions} 维`:`原有本地配置 · ${legacy?.modelId} · ${legacy?.dimensions} 维`}</p></div><span className="settings-badge">已生效</span></section>{indexCount>0&&<p className="settings-hint">已有 {indexCount} 份材料索引，当前向量配置已锁定。可新增其他模型并测试，但不能切换。</p>}{selectedDefault&&<button disabled={busy||dirty} onClick={restoreLegacy}>恢复原有本地配置</button>}
+  <div className="settings-split">
+   <aside className="settings-rail"><div className="settings-list-title"><h2>嵌入模型 <span>{catalog.models.length}</span></h2><button aria-label="新增嵌入模型" disabled={busy||!providers.length||!!initial.error} onClick={add}><Plus size={18}/></button></div>
+    <label className="settings-search"><Search size={16}/><input aria-label="搜索嵌入模型" placeholder="搜索模型或供应商" value={query} onChange={e=>setQuery(e.target.value)}/></label>
+    <div className="settings-provider-list">{visible.map(m=><button key={m.id} className={m.id===form?.id?'active':''} aria-pressed={m.id===form?.id} onClick={()=>choose(m)}><span className="provider-mark"><Database size={17}/></span><span><strong>{m.name}</strong><small>{providers.find(p=>p.id===m.providerId)?.name||'供应商已失效'} · {m.dimensions} 维</small><small>{m.modelId}</small>{catalog.defaultModelId===m.id&&<small className="model-default-marker">默认模型</small>}</span><ArrowRight size={15}/></button>)}</div>
+    {!visible.length&&<p className="settings-list-empty">{query?'没有匹配的嵌入模型':'尚未添加嵌入模型。'}</p>}
+    <p className="settings-rail-foot">密钥沿用供应商配置，不返回前端。</p>
+   </aside>
+   <div className="settings-editor" ref={editor}>{!form?<div className="settings-empty"><span className="settings-empty-icon"><Database size={28}/></span><h2>{providers.length?'添加第一个嵌入模型':'先配置嵌入服务供应商'}</h2><p>{providers.length?'填写准确的模型 ID 和向量维度，准备材料检索配置。':'请先在供应商页保存 Ollama、OpenAI、Gemini 或自定义兼容服务。'}<br/>Codex 登录和语言模型不能直接用作嵌入模型。</p><button className="primary" disabled={!!initial.error} onClick={providers.length?add:onProviders}><Plus size={17}/>{providers.length?'新增嵌入模型':'去添加供应商'}</button></div>:<form onSubmit={save} noValidate><fieldset className="settings-fieldset" disabled={busy}>
+    <div className="settings-editor-title"><div><p className="settings-eyebrow">EMBEDDING MODEL</p><h2>{saved?.name||'新增嵌入模型'}</h2></div><span className="settings-badge">{dirty?'未保存':'已保存'}</span></div>
+    <div className="settings-fields">{field('name','显示名称','例如：本地材料检索')}{field('modelId','模型 ID','例如：embeddinggemma')}</div>
+    <label className="settings-field">所属供应商<select value={form.providerId} onChange={e=>change('providerId',e.target.value)} aria-invalid={!!errors.providerId} aria-describedby={errors.providerId?'embedding-error-provider':undefined}><option value="">请选择供应商</option>{form.providerId&&!provider&&<option value={form.providerId}>原供应商已失效，请重新选择</option>}{providers.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>{errors.providerId&&<span className="field-error" id="embedding-error-provider">{errors.providerId}</span>}</label>
+    <div className="model-provider-info"><span>{provider?.url||'连接地址与 API Key 在供应商页管理。'}</span><button type="button" onClick={onProviders}>管理供应商 <ArrowRight size={14}/></button></div>
+    <div className="settings-fields"><label className="settings-field">嵌入接口协议<select value={form.protocol} onChange={e=>change('protocol',e.target.value)} aria-invalid={!!errors.protocol}><option value="openai">OpenAI 兼容</option><option value="ollama">Ollama 原生</option></select>{errors.protocol&&<span className="field-error">{errors.protocol}</span>}</label>{field('dimensions','向量维度','填写模型提供的维度，如 768')}</div>
+    <p className="settings-hint">协议需与服务实际支持的接口一致。维度按服务商信息填写；保存后可测试向量或探测原生维度。</p>
+    <details className="settings-advanced"><summary>高级参数 <span>批次、超时与维度请求</span></summary><div className="settings-fields">{field('batchSize','每批文本数','默认 8')}{field('timeout','请求超时（秒）','默认 60')}</div><label className="settings-checkbox"><input type="checkbox" checked={form.sendDimensions} disabled={form.protocol!=='openai'} onChange={e=>change('sendDimensions',e.target.checked)}/>在请求中发送 dimensions 参数</label><p className="settings-hint">仅适用于支持自定义维度的 OpenAI 兼容模型。Ollama 原生接口不发送该参数。</p></details>
+    </fieldset><section className="settings-test"><div><strong>向量测试与维度探测</strong><p>用一条短文本发起真实请求，可能产生少量费用。探测不发送 dimensions，结果填入表单后仍需保存。</p></div><div className="model-test-buttons"><button type="button" disabled={busy||dirty||!saved} onClick={()=>testModel(false)}>{busy?'处理中…':'测试嵌入模型'}</button><button type="button" disabled={busy||dirty||!saved} onClick={()=>testModel(true)}>探测维度</button></div></section>
+    {saved&&<div className="model-default-action"><button type="button" disabled={busy||dirty||!provider||!!initial.error||catalog.defaultModelId===saved.id} onClick={makeDefault}><Star size={15}/>{catalog.defaultModelId===saved.id?'已是默认模型':'设为默认模型'}</button><small>{dirty?'请先保存修改。':'默认模型用于后续材料入库与检索。'}</small></div>}
+    {errors.save&&<p role="alert" className="field-error">{errors.save}</p>}
+    <div className="settings-actions">{saved&&<button type="button" className="settings-delete" onClick={remove}><Trash2 size={16}/>删除模型</button>}<div><button type="button" disabled={busy||!dirty} onClick={()=>requestLeave(()=>open(saved||null))}>取消修改</button><button type="submit" className="primary" disabled={busy||!dirty||!!initial.error}><Check size={16}/>保存模型</button></div></div>
+   </form>}</div>
+  </div>
+  {confirmation&&<div className="overlay settings-confirm-overlay"><div className="dialog settings-confirm" role="dialog" aria-modal="true" aria-labelledby="embedding-confirm-title" aria-describedby="embedding-confirm-message" ref={modal} onKeyDown={e=>{if(e.key==='Escape')setConfirmation(null);if(e.key==='Tab'){const buttons=modal.current?.querySelectorAll('button');if(!buttons)return;if(e.shiftKey&&document.activeElement===buttons[0]){e.preventDefault();buttons[buttons.length-1].focus()}else if(!e.shiftKey&&document.activeElement===buttons[buttons.length-1]){e.preventDefault();buttons[0].focus()}}}}><h2 id="embedding-confirm-title">{confirmation.title}</h2><p id="embedding-confirm-message">{confirmation.message}</p><div className="confirm-actions"><button onClick={()=>setConfirmation(null)}>继续编辑</button><button className="primary" onClick={()=>{const fn=confirmation.action;setConfirmation(null);fn()}}>{confirmation.label}</button></div></div></div>}
+ </main>;
+}

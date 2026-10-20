@@ -16,6 +16,8 @@ async def main():
     while line:=await asyncio.to_thread(sys.stdin.readline):
         message=json.loads(line);method=message['method'];args=message.get('args',{})
         try:
+            config=args.pop('_embedding',None)
+            if config is not None:library.configure(config)
             if method=='index':
                 def progress(*values):
                     detail=' / '.join(str(v) for v in values if isinstance(v,(int,float)))
@@ -26,5 +28,5 @@ async def main():
             else:raise ValueError('Unknown library operation')
             emit({'type':'result','id':message['id'],'result':result})
         except Exception as exc:
-            emit({'type':'result','id':message['id'],'error':str(exc)})
+            emit({'type':'result','id':message['id'],'error':'材料检索或入库失败，请检查嵌入模型、向量维度与服务状态；已有索引不自动重建。'})
 asyncio.run(main())

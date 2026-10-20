@@ -8,7 +8,7 @@ type Provider={id:string;name:string;vendor:string;url:string};
 type Catalog={providers:Provider[];models:Model[];revision:number;defaultModelId:string|null};
 type Guard=React.MutableRefObject<(proceed:()=>void)=>void>;
 const capabilityLabels=[['vision','图像理解'],['tool_calls','工具调用'],['json_output','结构化输出'],['reasoning','推理能力']];
-export function ModelSettings({onBack,onProviders,guard,initialCatalog}:{initialCatalog:Catalog;onBack:()=>void;onProviders:()=>void;guard:Guard}){
+export function ModelSettings({onBack,onProviders,onEmbeddings,guard,initialCatalog}:{initialCatalog:Catalog;onBack:()=>void;onProviders:()=>void;onEmbeddings:()=>void;guard:Guard}){
   const [initial]=useState(()=>({catalog:initialCatalog,error:''})),[catalog,setCatalog]=useState<Catalog>(initial.catalog);
   const [form,setForm]=useState<Model|null>(initial.catalog.models[0]||null);
   const [busy,setBusy]=useState(false),[available,setAvailable]=useState<{id:string;name:string}[]>([]);
@@ -38,7 +38,7 @@ export function ModelSettings({onBack,onProviders,guard,initialCatalog}:{initial
   return <main className="settings-page">
     <button className="settings-back" onClick={onBack}><ArrowLeft size={16}/> 我的</button>
     <div className="settings-heading"><div><p className="settings-eyebrow">MODEL SETTINGS</p><h1>模型设置</h1><p>管理模型的连接方式，让学习按你的选择进行。</p></div><span className="settings-badge">后端配置</span></div>
-    <div className="settings-tabs" aria-label="设置分类"><button onClick={onProviders}>供应商</button><button aria-current="page">语言模型</button></div>
+    <div className="settings-tabs" aria-label="设置分类"><button onClick={onProviders}>供应商</button><button aria-current="page">语言模型</button><button onClick={onEmbeddings}>嵌入模型</button></div>
     <div className="settings-note"><Cpu size={18}/><p>默认模型用于后续生成与问答。切换前建议测试真实生成；已有学习内容保持不变。</p></div>
     {initial.error&&<p role="alert" className="field-error">{initial.error}</p>}
     <div role="status" className="settings-status">{message}</div>

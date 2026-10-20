@@ -1,12 +1,13 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, ArrowRight, Cable, Check, Eye, EyeOff, Plus, Search, Trash2} from 'lucide-react';
 import './settings.css';
+import {loadEmbeddings} from './embedding-draft.mjs';
 import {settingsApi} from './settings-api';
 
 type Provider = {id:string; name:string; vendor:string; url:string; format:string; version:string; key:string; headers:string; hasKey?:boolean;hasHeaders?:boolean;managed?:boolean;clearKey?:boolean;clearHeaders?:boolean};
 const vendors = [ ['codex','Codex · 本机登录',''], ['openai','OpenAI','https://api.openai.com/v1'], ['anthropic','Anthropic','https://api.anthropic.com'], ['gemini','Google Gemini','https://generativelanguage.googleapis.com/v1beta/openai'], ['deepseek','DeepSeek','https://api.deepseek.com'], ['ollama','Ollama','http://127.0.0.1:11434/v1'], ['custom','自定义 / OpenAI 兼容',''] ];
 const blank = ():Provider => ({id:crypto.randomUUID(),name:'',vendor:'custom',url:'',format:'auto',version:'',key:'',headers:''});
-export function ProviderSettings({onBack,guard,onModels,initialCatalog}:{initialCatalog:any;onBack:()=>void; onModels:()=>void; guard:React.MutableRefObject<(proceed:()=>void)=>void>}) {
+export function ProviderSettings({onBack,guard,onModels,onEmbeddings,initialCatalog}:{initialCatalog:any;onBack:()=>void; onModels:()=>void; onEmbeddings:()=>void; guard:React.MutableRefObject<(proceed:()=>void)=>void>}) {
   const [initial] = useState(()=>({providers:initialCatalog.providers.map((p:any)=>({...p,key:'',headers:''})),error:''}));
   const [revision,setRevision]=useState(initialCatalog.revision),[busy,setBusy]=useState(false),[discovered,setDiscovered]=useState<{id:string;name:string}[]>([]);
   const [providers,setProviders] = useState(initial.providers);
@@ -52,6 +53,7 @@ export function ProviderSettings({onBack,guard,onModels,initialCatalog}:{initial
   function remove(){
     if(!saved)return;
     if(saved.managed||busy)return;
+    try{if(loadEmbeddings(localStorage).models.some((m:any)=>m.providerId===saved.id)){setErrors({save:'此供应商仍关联本浏览器的嵌入模型草稿，请先更换关联或删除草稿。'});return}}catch(e){setErrors({save:(e as Error).message});return}
     setConfirmation({title:'删除供应商？',message:`将删除“${saved.name}”及其连接凭据。有关联模型时，后端会阻止删除。`,action:async()=>{setBusy(true);try{const ps=acceptCatalog(await settingsApi('/providers/'+saved.id,'DELETE',{revision}));const first=ps[0]||null;setSelected(first?.id||null);setForm(first);baseline.current=JSON.stringify(first);setErrors({});setDiscovered([]);setMessage('供应商已删除。')}catch(e){setErrors({save:(e as Error).message})}finally{setBusy(false)}}});
   }
   const visible=providers.filter(p=>(p.name+' '+p.vendor).toLowerCase().includes(query.toLowerCase()));
@@ -59,7 +61,7 @@ export function ProviderSettings({onBack,guard,onModels,initialCatalog}:{initial
   return <main className="settings-page">
     <button className="settings-back" onClick={onBack}><ArrowLeft size={16}/> 我的</button>
     <div className="settings-heading"><div><p className="settings-eyebrow">MODEL SETTINGS</p><h1>模型设置</h1><p>管理模型的连接方式，让学习按你的选择进行。</p></div><span className="settings-badge">后端配置</span></div>
-    <div className="settings-tabs" aria-label="设置分类"><button aria-current="page">供应商</button><button onClick={onModels}>语言模型</button></div>
+    <div className="settings-tabs" aria-label="设置分类"><button aria-current="page">供应商</button><button onClick={onModels}>语言模型</button><button onClick={onEmbeddings}>嵌入模型</button></div>
     <div className="settings-note"><Cable size={18}/><p>连接凭据保存在本机后端。先保存供应商，再测试连接；在语言模型页设置默认模型供后续生成使用。</p></div>
     {initial.error&&<p role="alert" className="field-error">{initial.error}</p>}
     <div role="status" className="settings-status">{message}</div>

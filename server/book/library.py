@@ -26,8 +26,25 @@ class LocalLibrary:
         self.root=Path(root).resolve()
         endpoint=os.environ.get('SELF_STUDY_EMBEDDING_URL','http://127.0.0.1:11434').rstrip('/')
         self.config=EmbeddingConfig(model=os.environ.get('SELF_STUDY_EMBEDDING_MODEL','embeddinggemma'),api_key='',binding='ollama',provider_name='ollama',base_url=endpoint+'/api/embed',effective_url=endpoint+'/api/embed',dim=int(os.environ.get('SELF_STUDY_EMBEDDING_DIM','768')),send_dimensions=False,batch_size=8)
+        self.fingerprint=None
+        self.legacy=True
         self.pipeline=LlamaIndexPipeline(kb_base_dir=str(self.root),document_loader=ParsedDocumentLoader())
         self.lock=asyncio.Lock()
+
+    def configure(self, value):
+        value=dict(value)
+        self.fingerprint=value.pop('fingerprint',None)
+        self.legacy=value.pop('legacy',False)
+        self.config=EmbeddingConfig(**value)
+
+    def check_manifest(self, folder):
+        manifest=folder/'local-source.json'
+        if not manifest.exists():return
+        old=json.loads(manifest.read_text())
+        if old.get('fingerprint'):
+            if old['fingerprint']!=self.fingerprint:raise ValueError('嵌入配置与现有索引不一致')
+        elif not self.legacy or old.get('model')!=self.config.model or old.get('dimensions')!=self.config.dim:
+            raise ValueError('旧索引需保持原嵌入配置')
 
     def folder(self,kb):
         if not re.fullmatch(r'app-source-[a-zA-Z0-9-]{1,100}',kb):
@@ -43,6 +60,7 @@ class LocalLibrary:
 
     async def index(self,source_id,text,title='',progress=None):
         kb='app-source-'+source_id;folder=self.folder(kb)
+        self.check_manifest(folder)
         digest=hashlib.sha256((self.config.model+'\0'+str(self.config.dim)+'\0'+str(self.config.base_url)+'\0'+text).encode()).hexdigest()
         async with self.lock:
             manifest=folder/'local-source.json'
@@ -54,14 +72,15 @@ class LocalLibrary:
             raw=folder/'raw'/'material.txt';raw.write_text(text,encoding='utf-8')
             with embedding_config_scope(self.config):
                 ok=await self.pipeline.initialize(kb,[str(raw)],progress_callback=progress)
-            if not ok:raise ValueError('材料入库失败，请确认 Ollama 和 embeddinggemma 可用后重试')
-            result={'kb':kb,'digest':digest,'model':self.config.model,'dimensions':self.config.dim,'characters':len(text),'title':title}
+            if not ok:raise ValueError('材料入库失败，请检查当前嵌入服务与模型后重试')
+            result={'fingerprint':self.fingerprint,'kb':kb,'digest':digest,'model':self.config.model,'dimensions':self.config.dim,'characters':len(text),'title':title}
             manifest.write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
             return result
 
     async def search(self,query,kb_name,**kwargs):
         folder=self.folder(kb_name)
         if not (folder/'local-source.json').exists():raise ValueError('材料尚未完成入库，请先入库')
+        self.check_manifest(folder)
         with embedding_config_scope(self.config):
             result=await self.pipeline.search(query,kb_name,top_k=kwargs.get('top_k',4))
         if not result or result.get('needs_reindex') or result.get('error_type'):

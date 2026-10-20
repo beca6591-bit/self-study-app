@@ -8,7 +8,7 @@ app.use((req,res,next)=>{if(![`127.0.0.1:${port}`,`localhost:${port}`].includes(
 const upload=multer({dest:path.join(dataDir,'uploads'),limits:{fileSize:30*1024*1024,files:1}});
 const requireProject=(id)=>{const p=get('projects',id);if(!p||p.deleting)throw new Error('学习项目不存在或正在删除');return p};
 app.use('/api/books',bookRouter);
-app.use('/api/model-settings',settingsRouter(modelCatalog,ai,()=>list('jobs').some(j=>['running','queued'].includes(j.status))));
+app.use('/api/model-settings',settingsRouter(modelCatalog,ai,()=>bookBridge.active||bookBridge.library?.active||list('jobs').some(j=>['running','queued'].includes(j.status))));
 app.get('/api/health',(req,res)=>res.json({service:'self-study',environment:process.env.SELF_STUDY_ENV||'local',database:'sqlite',ok:true}));
 app.get('/api/status',async(req,res)=>{try{res.json(await ai.connect())}catch(e){res.json({connected:false,error:e.message})}});
 app.get('/api/projects',(req,res)=>res.json(list('projects').filter(p=>p.status!=='setup').map(p=>({...p,lessonCount:list('lessons',p.id).length,completed:list('lessons',p.id).filter(l=>l.status==='completed').length}))));
