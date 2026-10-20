@@ -42,6 +42,8 @@ Manim 动画需要额外环境；Apple Silicon 可执行 `sh scripts/setup-book-
 
 ## 模型设置
 
+首次安装不选择默认语言模型，打开页面和查看状态不会启动 Codex。需要 AI 生成时，页面引导先添加供应商，再添加模型并设为默认；已有配置的默认选择保持不变。
+
 从“我的 → 模型设置”进入。内置 Codex 复用本机登录，需要可用的 Codex app-server；也可填写支持 Chat Completions、Responses 或 Anthropic Messages 的供应商地址和 API Key。新增模型、保存、测试并设为默认后，后续生成和问答使用此模型。
 
 可用 `SELF_STUDY_CODEX` 指定 Codex 可执行文件。复制代码不会复制登录状态或 API Key。
@@ -98,3 +100,9 @@ npm run doctor
 检索 Python 子进程按每次操作接收当前后端配置，无需重启应用才能更新批次或凭据。凭据仅在后端与子进程间传递，不回传页面。材料检索异常统一返回简短提示，避免泄露供应商原始错误。
 
 验收：36 项 Node 测试通过；本机 Ollama / embeddinggemma 已真实验证 768 维探测、入库、检索、重启恢复和切换拦截。OpenAI 兼容协议仅经本机模拟端点验证，需填写真实凭据后测试。运行 `node scripts/embedding-smoke.mjs` 可在临时目录重新执行本机嵌入验收（需 Python 环境与 Ollama，不调用语言模型）。
+
+### 阿里云百炼 · 通义千问
+
+供应商选择“阿里云百炼 · 通义千问”，填写百炼 API Key。使用 OpenAI Chat Completions 兼容协议，预填北京地址 `https://dashscope.aliyuncs.com/compatible-mode/v1`；地域或工作空间不同，请使用控制台对应地址及密钥。语言模型页关联此供应商并填写模型 ID（例如 `qwen-plus`），测试成功后设为默认。模型发现失败时可手动填写 ID。
+
+沿用内置 DeepTutor 的 `dashscope` 供应商标识及 OpenAI 兼容接入方式。思考能力选择“否”时向百炼发送 `enable_thinking:false`；自动时保留服务端默认，请选择支持此设置的模型。当前为文本生成接入，不代表所有多模态及嵌入模型均受支持。接口参考：https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions 。

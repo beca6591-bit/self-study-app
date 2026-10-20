@@ -10,7 +10,7 @@ const requireProject=(id)=>{const p=get('projects',id);if(!p||p.deleting)throw n
 app.use('/api/books',bookRouter);
 app.use('/api/model-settings',settingsRouter(modelCatalog,ai,()=>bookBridge.active||bookBridge.library?.active||list('jobs').some(j=>['running','queued'].includes(j.status))));
 app.get('/api/health',(req,res)=>res.json({service:'self-study',environment:process.env.SELF_STUDY_ENV||'local',database:'sqlite',ok:true}));
-app.get('/api/status',async(req,res)=>{try{res.json(await ai.connect())}catch(e){res.json({connected:false,error:e.message})}});
+app.get('/api/status',async(req,res)=>{try{res.json(ai.status())}catch(e){res.json({connected:false,error:e.message})}});
 app.get('/api/projects',(req,res)=>res.json(list('projects').filter(p=>p.status!=='setup').map(p=>({...p,lessonCount:list('lessons',p.id).length,completed:list('lessons',p.id).filter(l=>l.status==='completed').length}))));
 app.post('/api/projects',(req,res)=>{const profile=z.object({title:z.string().trim().min(1).max(120),why:z.string().max(2000).default(''),goal:z.string().trim().min(1).max(2000),base:z.string().max(2000).default(''),weekly:z.string().max(20).default('3'),duration:z.string().max(20).default('20')}).parse(req.body);res.json(save('projects',{id:uid(),profile,title:profile.title,confirmed:false,status:'new',createdAt:new Date().toISOString()}))});
 function sourcePublic(s){const {chunks,filePath,...rest}=s;return {...rest,chunkCount:chunks?.length||0,characters:chunks?.reduce((n,c)=>n+c.text.length,0)||0}}
@@ -35,5 +35,5 @@ app.post('/api/lessons/:id/answer',(req,res)=>{const l=get('lessons',req.params.
 app.patch('/api/lessons/:id',(req,res)=>{const l=get('lessons',req.params.id);if(!l)throw new Error('课节不存在');const b=z.object({note:z.string().max(10000).optional(),complete:z.boolean().optional(),expectedReviewAt:z.string().optional(),scene:z.enum(['classroom','review']).optional()}).parse(req.body);const completed=b.complete?completeLesson(l,list('attempts',l.projectId),b.expectedReviewAt,Date.now(),b.scene):l;if(b.complete&&completed===l)return res.json(publicLesson(l));if(b.complete)activity(l.projectId,'complete');res.json(publicLesson(save('lessons',{...completed,note:b.note??completed.note}))) });
 app.post('/api/jobs/:id/cancel',(req,res)=>{cancel(req.params.id);res.json({ok:true})});
 app.get('/api/jobs/:id',(req,res)=>res.json(get('jobs',req.params.id)));
-app.use(express.static(path.join(root,'dist')));app.use((err,req,res,next)=>{console.error('Request error:',err.message);res.status(400).json({error:err instanceof z.ZodError?'输入格式不正确，请检查填写内容。':err.message||'处理失败'})});
+app.use(express.static(path.join(root,'dist')));app.use((err,req,res,next)=>{console.error('Request error:',err.message);res.status(err.code==='MODEL_NOT_CONFIGURED'?409:400).json({code:err.code==='MODEL_NOT_CONFIGURED'?err.code:undefined,error:err instanceof z.ZodError?'输入格式不正确，请检查填写内容。':err.message||'处理失败'})});
 await mkdir(path.join(dataDir,'uploads'),{recursive:true});app.listen(port,'127.0.0.1',()=>console.log(`自学已启动：${address}`));for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{bookBridge.close();ai.close();process.exit(0)});

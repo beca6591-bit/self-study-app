@@ -69,10 +69,10 @@ test('book projects validate input, accept optional sources and survive restart'
  assert.equal((await request('/books/projects',{goal:''})).status,400);
  const r=await request('/books/projects',{goal:'Understand triangles',depth:'brief'});assert.equal(r.status,200);const p=await r.json();assert.equal(p.stage,'input');
  assert.equal(p.knowledgeSource,'general');
- assert.equal((await request('/books/projects/'+p.id+'/spine',{})).status,400);
+ const unconfigured=await request('/books/projects/'+p.id+'/spine',{});assert.equal(unconfigured.status,409);assert.equal((await unconfigured.json()).code,'MODEL_NOT_CONFIGURED');
  const src=await request('/projects/'+p.id+'/sources/text',{title:'Triangles',text:'A right triangle has exactly one right angle. The hypotenuse is its longest side.'});assert.equal(src.status,200);
  const longText='长背景材料'.repeat(20000)+'最后的独特知识';const form=new FormData();form.append('file',new Blob([longText]),'long-background.txt');const uploaded=await fetch(base+'/projects/'+p.id+'/sources/file',{method:'POST',body:form});assert.equal(uploaded.status,200);const longSource=await uploaded.json();assert.ok(longSource.characters>80000);const raw=await fetch(base+'/sources/'+longSource.id+'/chunks').then(r=>r.json());assert.equal(raw.chunks.map(c=>c.text).join(''),longText);
  await stop();await start();const restored=await fetch(base+'/books/projects/'+p.id).then(r=>r.json());assert.equal(restored.goal,p.goal);assert.equal(restored.sources.length,2);assert.equal(restored.knowledgeSource,'documents');assert.equal(restored.snapshot,null);
  const empty=await request('/books/projects',{goal:'Learn basic geometry without documents'}).then(r=>r.json());
- const queued=await request('/books/projects/'+empty.id+'/proposal',{});assert.equal(queued.status,200);assert.equal((await queued.json()).kind,'book:proposal');
+ const blocked=await request('/books/projects/'+empty.id+'/proposal',{});assert.equal(blocked.status,409);assert.equal((await blocked.json()).code,'MODEL_NOT_CONFIGURED');const unchanged=await fetch(base+'/books/projects/'+empty.id).then(r=>r.json());assert.equal(unchanged.jobs.length,0);assert.equal(unchanged.stage,'input');const status=await fetch(base+'/status').then(r=>r.json());assert.equal(status.configured,false);
 });

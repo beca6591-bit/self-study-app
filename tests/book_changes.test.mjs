@@ -8,6 +8,8 @@ const dir=await mkdtemp(path.join(os.tmpdir(),'book-changes-'));process.env.SELF
 const {save,get,list,db}=await import('../server/store.mjs');
 const {bookRouter,bookBridge}=await import('../server/book/routes.mjs');
 const {ai}=await import('../server/teaching.mjs');
+// This suite tests configured generation with a mocked bridge.
+ai.store.default('builtin-codex-default',0);
 const app=express();app.use(express.json());app.use(bookRouter);app.use((e,req,res,next)=>res.status(400).json({error:e.message}));
 const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s))});const url=`http://127.0.0.1:${server.address().port}`;
 const calls=[];let failure=false;
