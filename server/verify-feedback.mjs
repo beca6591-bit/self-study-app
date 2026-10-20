@@ -1,0 +1,7 @@
+// Opt-in live verification; records are written only to a temporary database.
+import Database from 'better-sqlite3';import {mkdtemp,rm,writeFile} from 'node:fs/promises';import os from 'node:os';import path from 'node:path';
+const dir=await mkdtemp(path.join(os.tmpdir(),'study-live-feedback-'));process.env.SELF_STUDY_DATA_DIR=dir;
+const source=new Database(new URL('../data/study.sqlite',import.meta.url).pathname,{readonly:true});
+const lesson=source.prepare('SELECT data FROM lessons WHERE id=?').get('1c0d7eb7-b806-4ff0-b180-19ae91634a3b');if(!lesson)throw new Error('Generate the podcast first lesson before running this check.');const l=JSON.parse(lesson.data);
+const store=await import('./store.mjs');for(const table of ['projects','sources','lessons'])for(const row of source.prepare(`SELECT data FROM ${table}`).all())store.save(table,JSON.parse(row.data));source.close();const teaching=await import('./teaching.mjs');
+try{await teaching.assess(l.id,l.content.questions[2].id,'低 token 价格只是单位价格低，不保证完成研究的总成本低。沙箱能运行数周是环境可用，不代表模型能持续可靠工作数周。需要任务成功率和人工复核成本的数据；成果计费在材料中还是未来方向。',false,()=>{});const result=store.list('attempts',l.projectId).at(-1);await writeFile('/private/tmp/self-study-feedback-verification.json',JSON.stringify(result,null,2));console.log(JSON.stringify({status:result.status,feedback:result.feedback,isolatedTest:true}));}finally{teaching.ai.close();store.db.close();await rm(dir,{recursive:true,force:true})}

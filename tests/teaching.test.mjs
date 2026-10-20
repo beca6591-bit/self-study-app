@@ -1,0 +1,32 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm} from 'node:fs/promises';import os from 'node:os';import path from 'node:path';
+const dir=await mkdtemp(path.join(os.tmpdir(),'self-study-test-'));process.env.SELF_STUDY_DATA_DIR=dir;
+const store=await import('../server/store.mjs');const teach=await import('../server/teaching.mjs');
+const {save,get,list,db}=store;const noReport=()=>{};
+test('generation validates references, withholds answers and preserves failed submissions',async()=>{
+ save('projects',{id:'p',profile:{goal:'understand'},confirmed:false});save('sources',{id:'s',projectId:'p',status:'ready',title:'test',chunks:[{id:'s:1',text:'A verified sentence in the original source.',start:0,end:3,summary:{summary:'cached',concepts:[],claims:[]}}]});
+ teach.ai.generate=async()=>({value:{title:'test course',overview:'test',gaps:[],lessons:[{title:'one',goal:'understand',minutes:20,chunkIds:['invalid']}]}});
+ await assert.rejects(()=>teach.buildCourse('p',noReport),/无效来源/);assert.equal(list('lessons','p').length,0);
+ teach.ai.generate=async()=>({value:{title:'test course',overview:'test',gaps:[],lessons:[{title:'one',goal:'understand',minutes:20,chunkIds:['s:1']}]}});
+ await teach.buildCourse('p',noReport);const lesson=list('lessons','p')[0];
+ const question={prompt:'Explain the source in your own words.',hint:'think carefully',answer:'test answer',rubric:'test criteria',chunkIds:['s:1']};
+ const content={title:'one',explanation:'test explanation '.repeat(20),example:'test example '.repeat(5),takeaways:['one'],citations:[{chunkId:'s:1',quote:'This quote does not exist.'}],questions:[question,question]};
+ teach.ai.generate=async()=>({value:content});await assert.rejects(()=>teach.buildLesson(lesson.id,noReport),/未匹配原文/);assert.equal(get('lessons',lesson.id).content,null);
+ content.citations[0].quote='A verified sentence';await teach.buildLesson(lesson.id,noReport);const saved=get('lessons',lesson.id);assert.equal(saved.content.questions.length,2);assert.equal(teach.publicLesson(saved).content.questions[0].answer,undefined);
+ teach.ai.generate=async()=>{throw new Error('simulated outage')};await assert.rejects(()=>teach.assess(lesson.id,saved.content.questions[0].id,'my independent answer',false,noReport),/simulated outage/);
+ const attempt=list('attempts','p')[0];assert.equal(attempt.answer,'my independent answer');assert.equal(attempt.status,'failed');assert.equal(attempt.hinted,false);
+});
+test('seminar modes and projects are isolated; failed replies preserve user text',async()=>{
+ save('projects',{id:'p2',profile:{goal:'another topic'},confirmed:true});
+ teach.ai.generate=async()=>({value:{reply:'What does that mean?'}});
+ await teach.seminar('p','student','Let me explain.',noReport);
+ await teach.seminar('p','guided','Ask me a question.',noReport);
+ await teach.seminar('p2','student','Different project.',noReport);
+ assert.equal(get('conversations','p:student').messages.length,2);
+ assert.equal(get('conversations','p:guided').messages[0].text,'Ask me a question.');
+ assert.equal(get('conversations','p2:student').messages[0].text,'Different project.');
+ teach.ai.generate=async()=>{throw new Error('offline')};
+ await assert.rejects(()=>teach.seminar('p','student','Keep my answer.',noReport),/offline/);
+ assert.equal(get('conversations','p:student').messages.at(-1).text,'Keep my answer.');
+ assert.equal(get('conversations','p:student').messages.at(-1).error,'offline');
+});
+test.after(async()=>{db.close();await rm(dir,{recursive:true,force:true})});

@@ -1,0 +1,1 @@
+export async function settingsApi(path='',method='GET',body?:unknown){const response=await fetch('/api/model-settings'+path,{method,headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let data;try{data=await response.json()}catch{throw Error('设置服务未就绪，请检查后端并重试')};if(!response.ok)throw Error(data.error||'设置请求失败');return data}

@@ -1,0 +1,9 @@
+import {mkdtemp,writeFile} from 'node:fs/promises';import os from 'node:os';import path from 'node:path';
+import {CatalogStore} from '../server/settings/catalog.mjs';import {ModelRuntime} from '../server/settings/runtime.mjs';import {BookBridge} from '../server/book/bridge.mjs';
+const root=path.resolve(new URL('..',import.meta.url).pathname),dataDir=await mkdtemp(path.join(os.tmpdir(),'self-study-model-smoke-'));
+const store=new CatalogStore(dataDir),ai=new ModelRuntime(store,path.join(dataDir,'ai-workspace')),bridge=new BookBridge({root,dataDir,ai});
+const report={dataDir,checks:[]};
+try{const models=await ai.discover('builtin-codex'),chosen=models.find(m=>m.isDefault)||models[0];if(!chosen)throw Error('没有可用模型');let c=store.saveModel({id:'smoke-selected',name:'独立验收模型',modelId:chosen.id,providerId:'builtin-codex',contextWindow:'',capabilities:{}},0);store.default('smoke-selected',c.revision);const restarted=new CatalogStore(dataDir);if(restarted.resolve().model.modelId!==chosen.id)throw Error('默认模型未持久化');report.model=chosen.id;report.checks.push('选择模型并重启读取配置');
+ const generate=ai.generate.bind(ai);ai.generate=async(...args)=>{const r=await generate(...args);if(r.model!==chosen.id)throw Error('实际模型与所选模型不一致');report.checks.push('实际模型命中 '+r.model);return r};
+ const result=await bridge.request('create',{user_intent:'用中文学习分数的基本含义，只做一章入门介绍。',language:'zh',depth:'brief',source_refs:[]});if(!result.book?.title||!result.book?.proposal)throw Error('未生成有效书籍方案');report.title=result.book.title;report.checks.push('DeepTutor 书籍方案通过新模型入口真实生成');report.success=true;
+}catch(e){report.success=false;report.error=e.message;process.exitCode=1}finally{bridge.close();ai.close();await writeFile(path.join(dataDir,'verification.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report))}
